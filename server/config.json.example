@@ -1,0 +1,18 @@
+{
+  "network_port": "9090",
+  "uds_socket_path": "/tmp/crimson-deck.sock",
+  "window_manager_cmd": "i3-msg",
+  "default_discovery_hostname": "workstation-hostname",
+  "default_capture_protocol": "x11",
+  "log_dir": null,
+  "openh264_settings": {
+    "target_bitrate_bps": 5000000,
+    "enable_skip_frame": false
+  },
+  "nvenc_settings": {
+    "target_bitrate_bps": 3000000,
+    "max_bitrate_bps": 4000000,
+    "buffer_size_kb": 256,
+    "keyframe_interval": 300
+  }
+}

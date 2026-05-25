@@ -1,0 +1,49 @@
+# Compiled binary outputs and system releases
+crimson-deck-server
+*.apk
+*.aab
+crimson-deck-2.0-release.apk
+crimson-deck-2.0-debug.apk
+
+# Workstation private runtime configurations
+config.json
+android/config.json
+server/config.json
+
+# Local and system logs
+logs/
+*.log
+
+# Unix IPC Sockets and Temporary targets
+*.sock
+
+# Rust compiled outputs (Cargo)
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Go compiled targets and dependencies
+server/go/server
+server/go/server.exe
+server/go/export/
+
+# Android module outputs, caches, and local configurations
+.gradle/
+build/
+app/build/
+local.properties
+*.keystore
+*.jks
+.cxx/
+.externalNativeBuild/
+captures/
+android/app/src/main/assets/config.json
+
+# OS-level garbage & IDE preferences
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/
+*.swp
+*~
