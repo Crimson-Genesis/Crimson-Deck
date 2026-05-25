@@ -34,6 +34,16 @@ The macro engine parses text formulas using two primary execution operators.
 * **Custom 2D Color Picker Canvas**: Integrates a highly visual hue-value space canvas displaying saturated neon primary shades, secondary gradients, background layers, and panels. Draggable nodes (`P`, `S`, `B`, `PL`) update configurations persistently in local preferences.
 * **Theme Coordination**: Macro creation tools and builder operator badges automatically match the active Cyberpunk theme's accent gradients in real-time.
 
+### Theme Selector and 2D Interactive Canvas
+The Settings screen incorporates an advanced 2D Hue-Value Canvas Color Picker to customize cyberpunk accent hues reactively:
+
+![Theme Engine Canvas Picker](photos/4_setting_theam_section.jpeg)
+
+### Integrated Sequence Macro Editor
+A dynamic, non-scrollable popup editor makes setting modifiers and character delays intuitive and direct:
+
+![Keyboard Macro Builder Editor](photos/6_setting_macro_builder_console.jpeg)
+
 ---
 
 ## 4. Multi-Format Serialization & Document Pickers
@@ -74,6 +84,11 @@ macros:
 
 ### B. Native Android Storage Pickers
 Integrates native `CreateDocument` and `OpenDocument` launchers to prompt the user for target backup directories or to load existing `.json`, `.toml`, or `.yaml` sheets. The application dynamically parses files based on their extension, auto-deduplicating and merging imported keys into the local database.
+
+### Macros Console Dashboard
+Manage, trigger, delete, and sync macros in a central Cyberpunk console panel:
+
+![Macros Configuration List](photos/5_setting_macros_list_section.jpeg)
 
 ---
 

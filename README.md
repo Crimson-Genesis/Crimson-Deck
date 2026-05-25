@@ -4,6 +4,26 @@ Crimson Deck is a high-performance, ultra-low-latency companion remote control b
 
 ---
 
+## Visual Application Showcase
+
+| 1. Connection & Autodiscovery | 2. Live Control Canvas |
+|:---:|:---:|
+| ![Home Page Connection Screen](docs/photos/1_Home_page.jpeg) | ![Remote Viewport Interface](docs/photos/2_control_screen_share_page.jpeg) |
+
+| 3. Settings Dashboard | 4. 2D Interactive Theme Engine |
+|:---:|:---:|
+| ![Settings Panel Options](docs/photos/3_setting_top_section.jpeg) | ![2D Color Picker Theme Engine](docs/photos/4_setting_theam_section.jpeg) |
+
+| 5. Macro Lists & Synced Configs | 6. Sequence Keypad Builder |
+|:---:|:---:|
+| ![Macros Configuration List](docs/photos/5_setting_macros_list_section.jpeg) | ![Macro Builder Composables](docs/photos/6_setting_macro_builder_console.jpeg) |
+
+| 7. Local File Downloads | 8. Workspace Uploads Panel |
+|:---:|:---:|
+| ![Local Workspace Downloads](docs/photos/7_download_option_home.jpeg) | ![Secure Directory Upload Interface](docs/photos/8_home_after_taping_push_option_upload_files_or_upload_folder_option.jpeg) |
+
+---
+
 ## Key Features
 
 * **Ultra-Low-Latency H.264 Streaming**: Leverages a fast Rust-based X11 MIT-SHM screen capture engine paired with standard system software encoders (`openh264`) or Nvidia hardware video acceleration (`h264_nvenc`) to capture workstation screens.

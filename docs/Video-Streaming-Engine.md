@@ -87,3 +87,8 @@ Incoming WebSockets H.264 Stream
 * The streaming canvas is implemented inside Jetpack Compose using an Android `TextureView`.
 * Hardware-decoded GPU texture buffers are drawn directly on the screen by the mobile device's graphics processor.
 * This architecture ensures lag-free rendering at a solid, stable 60 FPS while keeping the phone cool and preserving battery life.
+
+### High-Performance Remote Viewport Canvas
+The GPU-driven renderer maps video streams onto a sleek tactical canvas featuring zoom controls and action buttons:
+
+![Remote Viewport Interface](photos/2_control_screen_share_page.jpeg)

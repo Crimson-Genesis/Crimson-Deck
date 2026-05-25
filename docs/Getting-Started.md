@@ -110,6 +110,11 @@ Deploy the application directly to your phone with a single workspace script:
 * **Release Signing Key Parity**: The Gradle script signs the release build using local debug signatures. This generates the `installRelease` task and allows ADB to push the optimized release package straight to the USB-connected phone without signing conflicts.
 * **APK Backups**: A standalone copy of the compiled installer package is backed up to the project root directory as **`crimson-deck-2.0-release.apk`**.
 
+### App Home Screen Preview
+Once deployed, the app boots into a premium cyberpunk interface capable of scanning your local subnet and Tailscale MagicDNS connections automatically:
+
+![Home Page Connection Screen](photos/1_Home_page.jpeg)
+
 ---
 
 ## 4. Launching the App & Establishing a Connection
@@ -123,4 +128,31 @@ Deploy the application directly to your phone with a single workspace script:
 5. **Silky-Smooth 60 FPS Viewport**:
    * The app will transition to the high-performance viewing canvas, instantly pulling an H.264 I-frame the moment the TextureView surface becomes active.
    * Pressing the system back gesture will cleanly tear down the video stream socket, stopping server capture encoding and providing **silky-smooth, lag-free back navigation transitions**.
+
+---
+
+## 5. Visual Interface Showcase
+
+### Live Remote Viewport & Control Canvas
+The high-performance video renderer displays your workstation screen in real-time, coupled with an ergonomic capsular floating control toolbar (containing zero-pivot zoom reset, tactical cursor locking, arrow pads, and macro dropdown lists):
+
+![Remote Viewport Interface](photos/2_control_screen_share_page.jpeg)
+
+### Custom Configuration & Reactive Theme Engine
+The Settings dashboard provides dynamic gateway port customization, relative trackpad vs direct touch controls, history wipes, and a custom **2D Hue-Value Canvas Color Picker** to construct personalized cyberpunk interfaces reactively:
+
+![Settings Panel Options](photos/3_setting_top_section.jpeg)
+![2D Color Picker Theme Engine](photos/4_setting_theam_section.jpeg)
+
+### Macro Sequences & Keypad Builder
+Build and persistent-sync complex automated keystroke formulas in YAML/TOML/JSON, selecting exact key combinations, uppercase modifiers, and custom execution delays in a single compact interface:
+
+![Macros Configuration List](photos/5_setting_macros_list_section.jpeg)
+![Macro Builder Composables](photos/6_setting_macro_builder_console.jpeg)
+
+### High-Speed Workspace File Transfer
+Tap and establish dynamic HTTP upload/download connections over secure lanes, tracking transfer progress in real-time logs while exchanging full directories and system files:
+
+![Local Workspace Downloads](photos/7_download_option_home.jpeg)
+![Secure Directory Upload Interface](photos/8_home_after_taping_push_option_upload_files_or_upload_folder_option.jpeg)
 
