@@ -21,7 +21,7 @@ Welcome to the Crimson Deck (crimson-deck) GitLab Wiki. This project is a high-p
 
 ```mermaid
 flowchart TD
-    subgraph Workstation Host (Arch Linux)
+    subgraph "Workstation Host (Arch Linux)"
         capture_engine[Rust Engine: X11 SHM / Wayland PipeWire]
         uds_srv[Rust Engine: UDS Server - /tmp/crimson-deck.sock]
         go_uds[Go Gateway: UDS Client]
@@ -29,7 +29,7 @@ flowchart TD
         go_emul[Go Gateway: xdotool / xclip / i3 IPC]
     end
     
-    subgraph Android Mobile Client (Kotlin)
+    subgraph "Android Mobile Client (Kotlin)"
         ws_client[Kotlin: WebSocketManager]
         surface_decoder[Kotlin: H264Decoder Surface]
         viewmodel[Kotlin: AgentViewModel]
