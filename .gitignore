@@ -47,3 +47,7 @@ Thumbs.db
 .vscode/
 *.swp
 *~
+
+#antigravity things
+.antigravitycli
+.antigravitycli/
