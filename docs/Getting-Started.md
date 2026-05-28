@@ -108,7 +108,7 @@ Deploy the application directly to your phone with a single workspace script:
 ```
 * **Java 26 Compatibility**: The build script automatically overrides `JAVA_HOME` to target JDK 17 (scanning `~/jdk17` and local OpenJDK paths), bypassing compiler failures under newer system-default Java 26 runtimes.
 * **Release Signing Key Parity**: The Gradle script signs the release build using local debug signatures. This generates the `installRelease` task and allows ADB to push the optimized release package straight to the USB-connected phone without signing conflicts.
-* **APK Backups**: A standalone copy of the compiled installer package is backed up to the project root directory as **`crimson-deck-2.0-release.apk`**.
+* **APK Backups**: A standalone copy of the compiled installer package is backed up to the project root directory using the current version name, such as **`crimson-deck-2.1-release.apk`**.
 
 ### App Home Screen Preview
 Once deployed, the app boots into a premium cyberpunk interface capable of scanning your local subnet and Tailscale MagicDNS connections automatically:

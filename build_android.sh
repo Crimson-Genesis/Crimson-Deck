@@ -51,6 +51,15 @@ build_android() {
     # Make sure gradlew is executable
     chmod +x gradlew
     
+    # Extract version name from build.gradle.kts dynamically, defaulting to "2.1"
+    local version_name="2.1"
+    if [ -f "$ANDROID_DIR/app/build.gradle.kts" ]; then
+        local extracted=$(grep "versionName =" "$ANDROID_DIR/app/build.gradle.kts" | sed -E 's/.*versionName = "([^"]*)".*/\1/')
+        if [ -n "$extracted" ]; then
+            version_name="$extracted"
+        fi
+    fi
+
     if [ "$mode" = "release" ]; then
         ./gradlew assembleRelease
         
@@ -62,8 +71,8 @@ build_android() {
         fi
         
         if [ -n "$src_apk" ] && [ -f "$src_apk" ]; then
-            cp "$src_apk" "$SCRIPT_DIR/crimson-deck-2.0-release.apk"
-            echo "✓ Release APK saved to: crimson-deck-2.0-release.apk"
+            cp "$src_apk" "$SCRIPT_DIR/crimson-deck-$version_name-release.apk"
+            echo "✓ Release APK saved to: crimson-deck-$version_name-release.apk"
         else
             echo "✖ Warning: Could not find generated release APK."
         fi
@@ -77,8 +86,8 @@ build_android() {
         fi
         
         if [ -n "$src_apk" ] && [ -f "$src_apk" ]; then
-            cp "$src_apk" "$SCRIPT_DIR/crimson-deck-2.0-debug.apk"
-            echo "✓ Debug APK saved to: crimson-deck-2.0-debug.apk"
+            cp "$src_apk" "$SCRIPT_DIR/crimson-deck-$version_name-debug.apk"
+            echo "✓ Debug APK saved to: crimson-deck-$version_name-debug.apk"
         else
             echo "✖ Warning: Could not find generated debug APK."
         fi

@@ -64,35 +64,44 @@ fi
 # Ensure gradlew is executable
 chmod +x gradlew
 
-if [ "$MODE" = "release" ]; then
-    echo "=== Initiating Gradle Build & Direct USB Installation (RELEASE) ==="
-    ./gradlew installRelease
-    
-    # Export a copy of the release APK to the root folder
-    local_apk="$ANDROID_DIR/app/build/outputs/apk/release/app-release-unsigned.apk"
-    if [ ! -f "$local_apk" ]; then
-        local_apk=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+    # Extract version name from build.gradle.kts dynamically, defaulting to "2.1"
+    VERSION_NAME="2.1"
+    if [ -f "$ANDROID_DIR/app/build.gradle.kts" ]; then
+        EXTRACTED_VER=$(grep "versionName =" "$ANDROID_DIR/app/build.gradle.kts" | sed -E 's/.*versionName = "([^"]*)".*/\1/')
+        if [ -n "$EXTRACTED_VER" ]; then
+            VERSION_NAME="$EXTRACTED_VER"
+        fi
     fi
 
-    if [ -n "$local_apk" ] && [ -f "$local_apk" ]; then
-        cp "$local_apk" "$SCRIPT_DIR/crimson-deck-2.0-release.apk"
-        echo "✓ Success! Backup release APK saved to root as: crimson-deck-2.0-release.apk"
-    fi
-else
-    echo "=== Initiating Gradle Build & Direct USB Installation (DEBUG) ==="
-    ./gradlew installDebug
-    
-    # Export a copy of the debug APK to the root folder
-    local_apk="$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk"
-    if [ ! -f "$local_apk" ]; then
-        local_apk=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
-    fi
+    if [ "$MODE" = "release" ]; then
+        echo "=== Initiating Gradle Build & Direct USB Installation (RELEASE) ==="
+        ./gradlew installRelease
+        
+        # Export a copy of the release APK to the root folder
+        local_apk="$ANDROID_DIR/app/build/outputs/apk/release/app-release-unsigned.apk"
+        if [ ! -f "$local_apk" ]; then
+            local_apk=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+        fi
 
-    if [ -n "$local_apk" ] && [ -f "$local_apk" ]; then
-        cp "$local_apk" "$SCRIPT_DIR/crimson-deck-2.0-debug.apk"
-        echo "✓ Success! Backup debug APK saved to root as: crimson-deck-2.0-debug.apk"
+        if [ -n "$local_apk" ] && [ -f "$local_apk" ]; then
+            cp "$local_apk" "$SCRIPT_DIR/crimson-deck-$VERSION_NAME-release.apk"
+            echo "✓ Success! Backup release APK saved to root as: crimson-deck-$VERSION_NAME-release.apk"
+        fi
+    else
+        echo "=== Initiating Gradle Build & Direct USB Installation (DEBUG) ==="
+        ./gradlew installDebug
+        
+        # Export a copy of the debug APK to the root folder
+        local_apk="$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk"
+        if [ ! -f "$local_apk" ]; then
+            local_apk=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+        fi
+
+        if [ -n "$local_apk" ] && [ -f "$local_apk" ]; then
+            cp "$local_apk" "$SCRIPT_DIR/crimson-deck-$VERSION_NAME-debug.apk"
+            echo "✓ Success! Backup debug APK saved to root as: crimson-deck-$VERSION_NAME-debug.apk"
+        fi
     fi
-fi
 
 echo ""
 echo "✓ Success! Companion app built and successfully installed on your phone."

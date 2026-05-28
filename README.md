@@ -98,7 +98,7 @@ Run the USB deployment script to compile the optimized package and install it di
 ```
 * **JDK 17 Overrides**: The build script automatically detects `$HOME/jdk17` and standard OpenJDK directories to bypass compile errors caused by newer default Java 26 system compilers.
 * **Dynamic local.properties**: Gradle automatically generates the Android SDK path mappings (`local.properties`) using dynamic environment variable evaluations at compilation time.
-* **Standalone APKs**: Standalone packages are saved to the project root directory as `crimson-deck-2.0-release.apk` (and `crimson-deck-2.0-debug.apk`).
+* **Standalone APKs**: Standalone packages are saved to the project root directory using the current version name, such as `crimson-deck-2.1-release.apk` (and `crimson-deck-2.1-debug.apk`).
 
 ---
 
