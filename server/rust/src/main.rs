@@ -478,9 +478,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let go_bin_path = go_dir_path.join("server");
     let go_bin = go_bin_path.to_string_lossy().to_string();
     
-    let sudo_uid = env::var("SUDO_UID").ok().and_then(|s| s.parse::<u32>().ok());
-    let sudo_gid = env::var("SUDO_GID").ok().and_then(|s| s.parse::<u32>().ok());
-    let sudo_user = env::var("SUDO_USER").ok();
+    // sudo_uid, sudo_gid, sudo_user are already in scope from the top of main()
 
     let mut build_needed = !std::path::Path::new(&go_bin).exists();
     if !build_needed {
@@ -542,12 +540,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     go_cmd.env("DISPLAY", ":0");
     go_cmd.env("LOG_FILE_PATH", &log_path);
 
-    let _go_child = go_cmd.spawn()
-        .map_err(|e| {
-            error!("✖ Warning: Could not execute Go gateway server binary automatically.");
-            error!("  Error details: {}", e);
-            e
-        });
+    // R6 — Go child process watchdog: monitor and respawn Go gateway on exit
+    match go_cmd.spawn() {
+        Ok(initial_child) => {
+            let go_bin_w       = go_bin.clone();
+            let go_dir_w       = go_dir.clone();
+            let log_path_str   = log_path.to_string_lossy().to_string();
+            let sudo_uid_w     = sudo_uid;
+            let sudo_gid_w     = sudo_gid;
+            let sudo_user_w    = sudo_user.clone();
+            tokio::spawn(async move {
+                let mut current_child = initial_child;
+                let mut backoff_secs: u64 = 1;
+                loop {
+                    // Block until the child process exits
+                    let exit_status = tokio::task::spawn_blocking(move || current_child.wait()).await;
+                    match &exit_status {
+                        Ok(Ok(s))  => error!("[Watchdog] Go gateway exited ({}). Respawning in {}s...", s, backoff_secs),
+                        Ok(Err(e)) => error!("[Watchdog] Go gateway wait() failed ({}). Respawning in {}s...", e, backoff_secs),
+                        Err(e)     => error!("[Watchdog] spawn_blocking join error ({}). Respawning in {}s...", e, backoff_secs),
+                    }
+                    tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
+                    backoff_secs = (backoff_secs * 2).min(30);
+
+                    let mut cmd = std::process::Command::new(&go_bin_w);
+                    cmd.current_dir(&go_dir_w);
+                    if let Some(uid) = sudo_uid_w { cmd.uid(uid); }
+                    if let Some(gid) = sudo_gid_w { cmd.gid(gid); }
+                    if let Some(ref user) = sudo_user_w {
+                        let xauth = format!("/home/{}/.Xauthority", user);
+                        if std::path::Path::new(&xauth).exists() { cmd.env("XAUTHORITY", xauth); }
+                        cmd.env("HOME", format!("/home/{}", user));
+                        cmd.env("USER", user);
+                    }
+                    cmd.env("DISPLAY", ":0");
+                    cmd.env("LOG_FILE_PATH", &log_path_str);
+
+                    match cmd.spawn() {
+                        Ok(new_child) => {
+                            info!("[Watchdog] Go gateway respawned successfully.");
+                            current_child = new_child;
+                        }
+                        Err(e) => {
+                            error!("[Watchdog] Cannot respawn Go gateway: {}. Watchdog exiting.", e);
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+        Err(e) => {
+            error!("✖ Cannot launch Go gateway server: {}", e);
+        }
+    }
 
     // Run the automated ADB workstation IP discovery broadcast in a background thread
     broadcast_workstation_ips_to_adb();
@@ -656,7 +701,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let config = openh264::encoder::EncoderConfig::new(width, height)
                                                     .set_bitrate_bps(config_for_capture.openh264_settings.target_bitrate_bps)
                                                     .enable_skip_frame(config_for_capture.openh264_settings.enable_skip_frame);
-                                                let enc = openh264::encoder::Encoder::with_config(config).unwrap();
+                                                let enc = match openh264::encoder::Encoder::with_config(config) {
+                                                    Ok(enc) => enc,
+                                                    Err(e) => {
+                                                        error!("Failed to initialize OpenH264 encoder: {:?}", e);
+                                                        return;
+                                                    }
+                                                };
                                                 h264_encoder = Some(enc);
                                                 h264_encoder.as_mut().unwrap()
                                             }
@@ -721,6 +772,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 Err(e) => {
                                     error!("Wayland capture error: {}", e);
+                                    // R5: throttle to prevent CPU spin on repeated capture errors
+                                    tokio::time::sleep(Duration::from_millis(100)).await;
                                 }
                             }
                             let fps = target_fps_clone2.load(Ordering::SeqCst);
@@ -762,7 +815,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let config = openh264::encoder::EncoderConfig::new(width, height)
                                                     .set_bitrate_bps(config_for_capture.openh264_settings.target_bitrate_bps)
                                                     .enable_skip_frame(config_for_capture.openh264_settings.enable_skip_frame);
-                                                let enc = openh264::encoder::Encoder::with_config(config).unwrap();
+                                                let enc = match openh264::encoder::Encoder::with_config(config) {
+                                                    Ok(enc) => enc,
+                                                    Err(e) => {
+                                                        error!("Failed to initialize OpenH264 encoder: {:?}", e);
+                                                        return;
+                                                    }
+                                                };
                                                 h264_encoder = Some(enc);
                                                 h264_encoder.as_mut().unwrap()
                                             }
@@ -827,6 +886,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 Err(e) => {
                                     error!("X11 capture error: {}", e);
+                                    // R5: throttle to prevent CPU spin on repeated capture errors
+                                    tokio::time::sleep(Duration::from_millis(100)).await;
                                 }
                             }
                             let fps = target_fps_clone2.load(Ordering::SeqCst);
@@ -841,10 +902,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("Capture loop stopped.");
                 });
 
-                // Wait for command task to finish (indicates client disconnection)
-                let _ = command_task.await;
-                // Safely cancel capture task if it's still running
+                // R4 — Panic-safe command task + graceful session teardown
+                match command_task.await {
+                    Ok(_) => info!("Command task completed normally."),
+                    Err(e) if e.is_panic() => error!("Command task panicked: {:?}", e),
+                    Err(e) => error!("Command task join error: {:?}", e),
+                }
                 capture_task.abort();
+                let _ = capture_task.await;
                 info!("Session resources released successfully.");
             }
             Err(e) => {

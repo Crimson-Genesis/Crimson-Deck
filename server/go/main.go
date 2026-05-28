@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"archive/zip"
 	"bytes"
 	"encoding/binary"
@@ -194,6 +195,54 @@ func init() {
 	go startBackpressureMonitor()
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Dedup Logger — collapses identical consecutive log lines into one entry.
+// When the message changes it flushes the repeat count: "Emulating X  ×12"
+// ─────────────────────────────────────────────────────────────────────────────
+
+type dedupLogger struct {
+	mu      sync.Mutex
+	lastMsg string
+	count   int
+}
+
+func (d *dedupLogger) Printf(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if msg == d.lastMsg {
+		d.count++
+		return
+	}
+	// Flush pending repeat count before printing the new message
+	if d.count > 0 {
+		log.Printf("%s  ×%d\n", d.lastMsg, d.count+1)
+		d.count = 0
+	} else if d.lastMsg != "" {
+		log.Print(d.lastMsg + "\n")
+	}
+	d.lastMsg = msg
+}
+
+// Flush must be called at a natural boundary (e.g. end of command handler) to
+// emit the very last deduplicated message that has not been flushed yet.
+func (d *dedupLogger) Flush() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.lastMsg == "" {
+		return
+	}
+	if d.count > 0 {
+		log.Printf("%s  ×%d\n", d.lastMsg, d.count+1)
+	} else {
+		log.Print(d.lastMsg + "\n")
+	}
+	d.lastMsg = ""
+	d.count = 0
+}
+
+var cmdLog = &dedupLogger{}
+
 var droppedFrames uint64
 var totalFrames uint64
 
@@ -285,12 +334,19 @@ func notifyRustDaemonOfConfig() {
 
 func startXdotoolWorker() {
 	for args := range xdotoolQueue {
-		execCmd := exec.Command("xdotool", args...)
+		// G2: context timeout so xdotool can never hang indefinitely
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		execCmd := exec.CommandContext(ctx, "xdotool", args...)
 		// Ensure it has standard environment including XAUTHORITY and DISPLAY
 		execCmd.Env = append(os.Environ(), "DISPLAY=:0")
 		if err := execCmd.Run(); err != nil {
-			log.Printf("Warning: xdotool %v failed: %v\n", args, err)
+			if ctx.Err() == context.DeadlineExceeded {
+				log.Printf("Warning: xdotool %v timed out after 5s\n", args)
+			} else {
+				log.Printf("Warning: xdotool %v failed: %v\n", args, err)
+			}
 		}
+		cancel()
 	}
 }
 
@@ -365,11 +421,39 @@ func main() {
 
 	// 4. Listen and serve on all interfaces (Wi-Fi LAN + Tailscale VPN)
 	addr := fmt.Sprintf("0.0.0.0:%s", Port)
+
+	// Evict any stale process that is still holding our port (e.g. a previous
+	// instance that was SIGKILLed before the OS released its socket, or a
+	// watchdog-respawned process that overlaps with the dying old one).
+	freePort(Port)
+
+	// G8: HTTP server with read/write/idle timeouts to prevent resource leaks
+	srv := &http.Server{
+		Addr:         addr,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 120 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 	log.Printf("Listening for client handshakes on port %s (All interfaces, including http://%s:%s)\n", Port, ip, Port)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Fatal: Web Server crashed: %v\n", err)
 	}
 }
+
+// freePort kills any process currently holding the given TCP port using fuser,
+// then waits briefly for the OS to fully release the socket before returning.
+func freePort(port string) {
+	portSpec := port + "/tcp"
+	cmd := exec.Command("fuser", "-k", portSpec)
+	if out, err := cmd.CombinedOutput(); err == nil {
+		log.Printf("[Startup] Evicted stale process from port %s. Waiting for socket release...\n", port)
+		time.Sleep(300 * time.Millisecond)
+	} else {
+		// fuser exits non-zero when no process owns the port — that is fine.
+		_ = out
+	}
+}
+
 
 func handleStreamConfigAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -461,17 +545,25 @@ func getTailscaleOrLocalIP() string {
 // IPC UDS (Unix Domain Socket) Manager
 // ─────────────────────────────────────────────────────────────────────────────
 
-// monitorAndProcessUDS implements an infinite reconnect loop to pull screen
-// grab frames from the Rust systems daemon, swap channels, encode JPEGs, and stream.
+// monitorAndProcessUDS implements an infinite reconnect loop with exponential backoff
+// to pull screen grab frames from the Rust systems daemon, swap channels, encode JPEGs, and stream.
 func monitorAndProcessUDS() {
+	// G3: exponential backoff for UDS reconnect (250ms → 8s)
+	backoff := 250 * time.Millisecond
+	maxBackoff := 8 * time.Second
 	for {
 		log.Printf("Connecting to local systems engine over UDS: %s\n", SocketPath)
 		conn, err := net.Dial("unix", SocketPath)
 		if err != nil {
-			log.Printf("Systems engine unreachable. Retrying in %v...\n", UdsRetryPeriod)
-			time.Sleep(UdsRetryPeriod)
+			log.Printf("Systems engine unreachable. Retrying in %v...\n", backoff)
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 			continue
 		}
+		backoff = 250 * time.Millisecond // Reset on successful connection
 
 		log.Println("Successfully attached to systems engine Unix Domain Socket!")
 		state.udsConnMutex.Lock()
@@ -539,9 +631,18 @@ func parseFrameStream(r io.Reader) error {
 		_ = binary.BigEndian.Uint64(header[8:16]) // timestamp
 		payloadLen := binary.BigEndian.Uint32(header[16:20])
 
-		// Sanity check resolution
+		// G6: Guard against corrupted length fields allocating gigabytes
+		if payloadLen > 32*1024*1024 { // 32 MB max
+			return fmt.Errorf("oversized frame payload rejected: %d bytes", payloadLen)
+		}
+
+		// G5: Skip frames with invalid dimensions instead of killing the connection
 		if width == 0 || height == 0 || width > 7680 || height > 4320 {
-			return fmt.Errorf("invalid frame dimensions read: %dx%d", width, height)
+			log.Printf("Warning: skipping frame with invalid dimensions: %dx%d\n", width, height)
+			if payloadLen > 0 {
+				_, _ = io.CopyN(io.Discard, r, int64(payloadLen))
+			}
+			continue
 		}
 
 		// Check if there are active subscribers before performing expensive JPEG encoding
@@ -712,6 +813,24 @@ func handleStreamWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Video stream client disconnected: %s\n", conn.RemoteAddr())
 	}()
 
+	// G10 FIX: The stream is server→client only — Android never sends data frames, only
+	// WebSocket-level pings (every 30s via OkHttp pingInterval). Gorilla handles pings
+	// internally and does NOT unblock ReadMessage(), so the read deadline set at connection
+	// open was never renewed → stream froze and died after exactly 90 seconds idle.
+	//
+	// Fix: custom PingHandler resets the deadline on every ping from Android.
+	// 90s window = 3 missed pings before the connection is declared dead.
+	const streamDeadline = 90 * time.Second
+	conn.SetReadDeadline(time.Now().Add(streamDeadline))
+	conn.SetPingHandler(func(appData string) error {
+		conn.SetReadDeadline(time.Now().Add(streamDeadline))
+		// Must send the Pong ourselves since we overrode the default handler
+		return conn.WriteControl(
+			websocket.PongMessage,
+			[]byte(appData),
+			time.Now().Add(10*time.Second),
+		)
+	})
 	for {
 		_, _, err := conn.ReadMessage()
 		if err != nil {
@@ -728,13 +847,18 @@ func handleCommand(message []byte) {
 		return
 	}
 
-	// Helper function to send xdotool commands to the sequential worker queue
+	// G1: Non-blocking send — drop commands if queue is full rather than blocking
 	runXdotool := func(args ...string) {
-		xdotoolQueue <- args
+		select {
+		case xdotoolQueue <- args:
+		default:
+			log.Printf("xdotool queue full — dropping command: %v\n", args)
+		}
 	}
 
 	switch cmd.Type {
 	case "keyframe":
+		cmdLog.Flush()
 		log.Println("Force keyframe request received from client.")
 		notifyRustDaemonOfConfig()
 
@@ -748,15 +872,16 @@ func handleCommand(message []byte) {
 					break
 				}
 			}
-			
+
 			var i3Args []string
 			if isNumeric {
-				log.Printf("Emulating i3 workspace switch to number: %s\n", ws)
+				cmdLog.Printf("Workspace → %s", ws)
 				i3Args = []string{"workspace", "number", ws}
 			} else {
-				log.Printf("Emulating i3 workspace switch to: %s\n", ws)
+				cmdLog.Printf("Workspace → %s", ws)
 				i3Args = []string{"workspace", ws}
 			}
+			cmdLog.Flush()
 
 			go func(args []string) {
 				execCmd := exec.Command(WindowManagerCmd, args...)
@@ -772,7 +897,8 @@ func handleCommand(message []byte) {
 		}
 
 	case "fullscreen":
-		log.Printf("Emulating %s toggle fullscreen for focused window\n", WindowManagerCmd)
+		cmdLog.Flush()
+		log.Printf("Fullscreen toggle\n")
 		go func() {
 			execCmd := exec.Command(WindowManagerCmd, "fullscreen", "toggle")
 			execCmd.Env = os.Environ()
@@ -787,40 +913,38 @@ func handleCommand(message []byte) {
 
 	case "text":
 		if cmd.Text != "" {
-			log.Printf("Emulating typing text: %q\n", cmd.Text)
+			cmdLog.Flush()
+			log.Printf("Type: %q\n", cmd.Text)
 			runXdotool("type", "--delay", "10", cmd.Text)
 		}
 
 	case "clipboard":
 		if cmd.Text != "" {
-			log.Printf("Emulating clipboard sync: %d bytes\n", len(cmd.Text))
+			cmdLog.Flush()
+			log.Printf("Clipboard sync: %d bytes\n", len(cmd.Text))
 			go func(t string) {
 				// Set CLIPBOARD selection
 				execCmd1 := exec.Command("xclip", "-selection", "clipboard")
 				execCmd1.Env = append(os.Environ(), "DISPLAY=:0")
 				execCmd1.Stdin = strings.NewReader(t)
 				if err := execCmd1.Run(); err != nil {
-					log.Printf("Warning: xclip failed to set clipboard: %v\n", err)
+					log.Printf("Warning: xclip clipboard failed: %v\n", err)
 				}
-
 				// Set PRIMARY selection
 				execCmd2 := exec.Command("xclip", "-selection", "primary")
 				execCmd2.Env = append(os.Environ(), "DISPLAY=:0")
 				execCmd2.Stdin = strings.NewReader(t)
 				if err := execCmd2.Run(); err != nil {
-					log.Printf("Warning: xclip failed to set primary: %v\n", err)
+					log.Printf("Warning: xclip primary failed: %v\n", err)
 				}
-
-				// Wait a brief moment to ensure X11 registers the selections
 				time.Sleep(50 * time.Millisecond)
-
-				// Paste using Shift+Insert, queued sequentially through runXdotool
 				runXdotool("key", "shift+Insert")
 			}(cmd.Text)
 		}
 
 	case "key":
-		log.Printf("Emulating Keyboard Key: KeyCode=%d (X11 Keycode=%d), Pressed=%t\n", cmd.KeyCode, cmd.KeyCode+8, cmd.Pressed)
+		// Keys are already low-frequency — deduplicate in case of held keys
+		cmdLog.Printf("Key %d %s", cmd.KeyCode+8, map[bool]string{true: "↓", false: "↑"}[cmd.Pressed])
 		x11Keycode := fmt.Sprintf("%d", cmd.KeyCode+8)
 		if cmd.Pressed {
 			runXdotool("keydown", x11Keycode)
@@ -829,22 +953,27 @@ func handleCommand(message []byte) {
 		}
 
 	case "mouseabsolute":
-		log.Printf("Emulating Mouse Absolute Move: X=%d, Y=%d\n", cmd.X, cmd.Y)
+		// High-frequency — silent (fires every pointer move, not useful to log)
 		runXdotool("mousemove", fmt.Sprintf("%d", cmd.X), fmt.Sprintf("%d", cmd.Y))
 
 	case "mouserelative":
-		log.Printf("Emulating Mouse Relative Move: dx=%d, dy=%d\n", cmd.Dx, cmd.Dy)
+		// High-frequency — silent
 		runXdotool("mousemove_relative", "--", fmt.Sprintf("%d", cmd.Dx), fmt.Sprintf("%d", cmd.Dy))
 
 	case "mouseclick":
-		log.Printf("Emulating Mouse Click: Button=%d, Pressed=%t\n", cmd.Button, cmd.Pressed)
+		buttonName := map[uint16]string{272: "LMB", 273: "RMB", 274: "MMB"}
+		btn := buttonName[cmd.Button]
+		if btn == "" {
+			btn = fmt.Sprintf("Btn%d", cmd.Button)
+		}
+		cmdLog.Printf("Click %s %s", btn, map[bool]string{true: "↓", false: "↑"}[cmd.Pressed])
 		var x11Button string
 		switch cmd.Button {
-		case 272: // Left Button
+		case 272:
 			x11Button = "1"
-		case 273: // Right Button
+		case 273:
 			x11Button = "3"
-		case 274: // Middle Button
+		case 274:
 			x11Button = "2"
 		default:
 			x11Button = "1"
@@ -856,11 +985,11 @@ func handleCommand(message []byte) {
 		}
 
 	case "mousescroll":
-		log.Printf("Emulating Mouse Scroll: Steps=%d\n", cmd.Steps)
+		cmdLog.Printf("Scroll %+d", cmd.Steps)
 		if cmd.Steps > 0 {
-			runXdotool("click", "--repeat", fmt.Sprintf("%d", cmd.Steps), "4") // Scroll Up
+			runXdotool("click", "--repeat", fmt.Sprintf("%d", cmd.Steps), "4")
 		} else if cmd.Steps < 0 {
-			runXdotool("click", "--repeat", fmt.Sprintf("%d", -cmd.Steps), "5") // Scroll Down
+			runXdotool("click", "--repeat", fmt.Sprintf("%d", -cmd.Steps), "5")
 		}
 	}
 }
@@ -909,6 +1038,12 @@ func forwardCommandToUds(payload []byte) error {
 	if state.udsConn == nil {
 		return fmt.Errorf("systems engine UDS connection is currently down")
 	}
+
+	// G9: Set a 2-second write deadline to prevent indefinite blocking
+	if err := state.udsConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return fmt.Errorf("failed to set write deadline: %w", err)
+	}
+	defer state.udsConn.SetWriteDeadline(time.Time{}) // Reset deadline after write
 
 	// 1. Prepare packet length header (BigEndian 4B)
 	lenBuf := make([]byte, 4)

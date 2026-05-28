@@ -79,7 +79,7 @@ fun StreamScreen(
 
     LaunchedEffect(viewModel.isConnected, viewModel.explicitlyDisconnected) {
         if (!viewModel.isConnected && !viewModel.isConnecting && !viewModel.explicitlyDisconnected) {
-            viewModel.connectToWorkstation(viewModel.serverHost)
+            viewModel.debouncedReconnect(viewModel.serverHost)
         }
     }
 
@@ -174,10 +174,13 @@ fun StreamScreen(
                             val top = yStart * scale + offset.y
                             val bottom = (yStart + hDraw) * scale + offset.y
                             
-                            isOnVideo = centroid.x >= left && 
-                                        centroid.x <= right && 
-                                        centroid.y >= top && 
-                                        centroid.y <= bottom
+                            // Also gate on safeHeight: even if the video is panned below
+                            // the control panel, gestures in that zone stay as UI gestures.
+                            isOnVideo = centroid.x >= left &&
+                                        centroid.x <= right &&
+                                        centroid.y >= top &&
+                                        centroid.y <= bottom &&
+                                        centroid.y < safeHeight
                         }
                         
                         if (!isOnVideo) {
@@ -403,40 +406,51 @@ fun StreamScreen(
                 val xStart = (canvasSize.width - wDraw) / 2f
                 val yStart = safeHeight * 0.25f
                 
-                AndroidView(
-                    factory = { ctx ->
-                        TextureView(ctx).apply {
-                            surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                                override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
-                                    val surface = Surface(surfaceTexture)
-                                    viewModel.h264Decoder.setSurface(surface)
-                                    viewModel.requestKeyframe()
-                                }
-
-                                override fun onSurfaceTextureSizeChanged(surfaceTexture: SurfaceTexture, width: Int, height: Int) {}
-
-                                override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
-                                    viewModel.h264Decoder.setSurface(null)
-                                    return true
-                                }
-
-                                override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {}
-                            }
-                        }
-                    },
+                // Hard-clip the TextureView GPU surface to the safeHeight boundary so the
+                // stream cannot bleed below the control panel when zoomed in and dragged down.
+                // graphicsLayer transforms escape the parent's layout clip, so we enforce the
+                // scissor explicitly with a fixed-height clipToBounds Box.
+                Box(
                     modifier = Modifier
-                        .size(
-                            width = with(LocalDensity.current) { wDraw.toDp() },
-                            height = with(LocalDensity.current) { hDraw.toDp() }
-                        )
-                        .graphicsLayer {
-                            translationX = offset.x + xStart * scale
-                            translationY = offset.y + yStart * scale
-                            scaleX = scale
-                            scaleY = scale
-                            transformOrigin = TransformOrigin(0f, 0f)
-                        }
-                )
+                        .fillMaxWidth()
+                        .height(with(LocalDensity.current) { safeHeight.toDp() })
+                        .clipToBounds()
+                ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            TextureView(ctx).apply {
+                                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                                    override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+                                        val surface = Surface(surfaceTexture)
+                                        viewModel.h264Decoder.setSurface(surface)
+                                        viewModel.requestKeyframe()
+                                    }
+
+                                    override fun onSurfaceTextureSizeChanged(surfaceTexture: SurfaceTexture, width: Int, height: Int) {}
+
+                                    override fun onSurfaceTextureDestroyed(surfaceTexture: SurfaceTexture): Boolean {
+                                        viewModel.h264Decoder.setSurface(null)
+                                        return true
+                                    }
+
+                                    override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) {}
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .size(
+                                width = with(LocalDensity.current) { wDraw.toDp() },
+                                height = with(LocalDensity.current) { hDraw.toDp() }
+                            )
+                            .graphicsLayer {
+                                translationX = offset.x + xStart * scale
+                                translationY = offset.y + yStart * scale
+                                scaleX = scale
+                                scaleY = scale
+                                transformOrigin = TransformOrigin(0f, 0f)
+                            }
+                    )
+                }
             }
 
             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1462,6 +1476,11 @@ private fun getMappedCoordinates(
 ): Pair<Int, Int>? {
     if (canvasSize.width == 0 || canvasSize.height == 0) return null
     val safeHeight = canvasSize.height.toFloat() * 0.70f
+
+    // Hard input boundary: any touch in the control panel zone (below safeHeight)
+    // must NEVER route to stream controls, regardless of where the video is panned.
+    if (touchOffset.y >= safeHeight) return null
+
     val R_ws = bmpWidth.toFloat() / bmpHeight.toFloat()
     val R_canvas = canvasSize.width.toFloat() / safeHeight
     

@@ -23,6 +23,8 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
@@ -130,37 +132,43 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun syncStreamingConfig() {
         viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val url = URL("http://$serverHost:$serverPort/api/stream/config")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.connectTimeout = 3000
-                conn.readTimeout = 3000
-                conn.doOutput = true
+            val maxAttempts = 3
+            var attempt = 0
+            while (attempt < maxAttempts) {
+                attempt++
+                try {
+                    val url = URL("http://$serverHost:$serverPort/api/stream/config")
+                    val conn = url.openConnection() as HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.connectTimeout = 3000
+                    conn.readTimeout = 3000
+                    conn.doOutput = true
 
-                val payload = gson.toJson(
-                    mapOf(
-                        "frame_dropping" to useFrameDropping,
-                        "transport" to if (useWebRtc) "webrtc" else "websocket",
-                        "backpressure" to useBackpressure,
-                        "codec" to if (useH264Codec) "h264" else "mjpeg"
+                    val payload = gson.toJson(
+                        mapOf(
+                            "frame_dropping" to useFrameDropping,
+                            "transport" to if (useWebRtc) "webrtc" else "websocket",
+                            "backpressure" to useBackpressure,
+                            "codec" to if (useH264Codec) "h264" else "mjpeg"
+                        )
                     )
-                )
 
-                conn.outputStream.write(payload.toByteArray(Charsets.UTF_8))
-                conn.outputStream.flush()
-                conn.outputStream.close()
+                    conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
 
-                val code = conn.responseCode
-                if (code == 200) {
-                    android.util.Log.i("AgentViewModel", "Stream configuration synced successfully.")
-                } else {
-                    android.util.Log.e("AgentViewModel", "Failed to sync stream config: server returned code $code")
+                    val code = conn.responseCode
+                    if (code == 200) {
+                        android.util.Log.i("AgentViewModel", "Stream configuration synced successfully (attempt $attempt).")
+                        return@launch
+                    } else {
+                        android.util.Log.w("AgentViewModel", "Stream config sync returned $code (attempt $attempt/$maxAttempts)")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("AgentViewModel", "Stream config sync error (attempt $attempt/$maxAttempts): ${e.message}")
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("AgentViewModel", "Error syncing stream config: ${e.message}")
+                if (attempt < maxAttempts) delay(500L)
             }
+            android.util.Log.e("AgentViewModel", "Stream configuration sync failed after $maxAttempts attempts.")
         }
     }
 
@@ -324,8 +332,25 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         },
         onFrameDecoded = { byteSize ->
             trackFrame(streamWidth, streamHeight, byteSize)
+        },
+        onDecoderRecovered = {
+            // Request a new keyframe from server to recover the stream
+            android.util.Log.i("AgentViewModel", "Decoder recovered — requesting keyframe from server.")
+            requestKeyframe()
         }
     )
+
+    private var reconnectDebounceJob: Job? = null
+
+    fun debouncedReconnect(host: String) {
+        reconnectDebounceJob?.cancel()
+        reconnectDebounceJob = viewModelScope.launch {
+            delay(1500L) // Debounce: wait 1.5s before actually reconnecting
+            if (!isConnected && !explicitlyDisconnected) {
+                connectToWorkstation(host)
+            }
+        }
+    }
 
     private val webRtcManager = com.crimson.deck.data.webrtc.WebRtcManager(
         context = application,
@@ -679,6 +704,16 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         shiftActive = false
         superActive = false
         
+        // Release decoder before reconnecting to ensure clean MediaCodec state
+        h264Decoder.release()
+        synchronized(frameLock) {
+            lastFrameTimes.clear()
+            lastFrameSizes.clear()
+        }
+        streamFps = 0
+        streamBitrateKbps = 0.0
+        streamResolution = ""
+
         // Sync configuration before connecting to prime the server codec state (H.264 vs MJPEG)
         syncStreamingConfig()
         
@@ -802,23 +837,26 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                     if (lastDot == -1) continue
                     val subnetPrefix = localIp.substring(0, lastDot + 1)
                     
+                    val scanSemaphore = Semaphore(16) // Max 16 concurrent TCP probes
                     for (i in 1..254) {
                         val targetIp = "$subnetPrefix$i"
                         if (targetIp == localIp) continue
                         
                         val job = launch {
-                            try {
-                                val socket = Socket()
-                                socket.connect(InetSocketAddress(targetIp, serverPort), 150) // 150ms timeout
-                                socket.close()
-                                withContext(Dispatchers.Main) {
-                                    val isTailscale = targetIp.startsWith("100.")
-                                    val name = if (isTailscale) "workstation-tailscale" else "workstation-lan"
-                                    val type = if (isTailscale) "Tailscale" else "Wi-Fi LAN"
-                                    addDiscoveredWorkstation(name, targetIp, type)
+                            scanSemaphore.withPermit {
+                                try {
+                                    val socket = Socket()
+                                    socket.connect(InetSocketAddress(targetIp, serverPort), 150) // 150ms timeout
+                                    socket.close()
+                                    withContext(Dispatchers.Main) {
+                                        val isTailscale = targetIp.startsWith("100.")
+                                        val name = if (isTailscale) "workstation-tailscale" else "workstation-lan"
+                                        val type = if (isTailscale) "Tailscale" else "Wi-Fi LAN"
+                                        addDiscoveredWorkstation(name, targetIp, type)
+                                    }
+                                } catch (e: Exception) {
+                                    // Offline / Closed port
                                 }
-                            } catch (e: Exception) {
-                                // Offline / Closed port
                             }
                         }
                         jobs.add(job)

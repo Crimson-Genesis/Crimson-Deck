@@ -1693,19 +1693,87 @@ fun SettingsScreen(
                 }
             }
 
-            // Footer version tag
+            // ─── About ───────────────────────────────────────────────────────
+
             item {
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "CRIMSON DECK VIRTUAL BRIDGE V2.4\nENGINES ACTIVE - HIGH SECURITY SECURE MESH",
-                    color = Color(0xFF4A3E56),
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.5.sp,
-                    lineHeight = 14.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Gradient divider
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color.Transparent,
+                                    neonCrimson.copy(alpha = 0.4f),
+                                    Color.Transparent
+                                )
+                            )
+                        )
                 )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "ABOUT",
+                        color = neonCrimson.copy(alpha = 0.6f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 3.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "CRIMSON DECK",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp
+                    )
+                    Text(
+                        text = "Remote Desktop Companion",
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.5.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Crimson Deck turns your Android device into a low-latency remote control for your Linux workstation. " +
+                               "It streams a live H.264-encoded view of your desktop over your local network or Tailscale VPN, " +
+                               "and relays touch gestures as real mouse clicks, drags, and scrolls. " +
+                               "Keyboard input, modifier keys, and custom macro sequences are injected directly into the X11 session via xdotool.\n\n" +
+                               "The server is built on a Rust screen-capture engine using X11 MIT-SHM for zero-copy frame grabs, " +
+                               "paired with a Go signaling gateway that handles WebSocket transport and i3 IPC workspace control. " +
+                               "Clipboard sync, file transfer, and dynamic theme customisation are all included out of the box.",
+                        color = Color.White.copy(alpha = 0.35f),
+                        fontSize = 10.sp,
+                        lineHeight = 15.sp,
+                        letterSpacing = 0.2.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    // Version — centered at the very bottom of the settings page
+                    Text(
+                        text = "v2.1",
+                        color = neonCrimson.copy(alpha = 0.55f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
             }
         }        // POPUP CREATOR OVERLAY FLOATED DOWN WITH 24.DP CORNERS ON ALL SIDES
         if (showMacroCreator) {
@@ -1955,6 +2023,7 @@ fun SettingsScreen(
         }
     }
 }
+
 
 @Composable
 fun ColorDot(hex: Long) {

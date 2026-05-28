@@ -124,7 +124,7 @@ pub async fn read_command<R: tokio::io::AsyncReadExt + Unpin>(
 	}
 
 	let len = u32::from_be_bytes(len_buf) as usize;
-	if len == 0 || len > 65536 {
+	if len == 0 || len > 16384 {
 		return Err(std::io::Error::new(
 			std::io::ErrorKind::InvalidData,
 			format!("Invalid command length packet: {}", len),

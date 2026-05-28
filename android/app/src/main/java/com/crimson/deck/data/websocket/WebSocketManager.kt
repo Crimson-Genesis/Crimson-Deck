@@ -1,7 +1,5 @@
 package com.crimson.deck.data.websocket
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -17,6 +15,7 @@ class WebSocketManager(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .writeTimeout(0, TimeUnit.MILLISECONDS)
+        .pingInterval(30, TimeUnit.SECONDS) // Detect dead connections
         .build()
 
     private var commandSocket: WebSocket? = null
@@ -27,8 +26,16 @@ class WebSocketManager(
     private var hostPort: Int = 9090
     private var isConnected = false
     private var isConnecting = false
-    
-    private val reconnectRunnable = Runnable { connectCommand(hostAddress, hostPort) }
+
+    // Exponential backoff state
+    private var reconnectAttempts = 0
+    private val maxReconnectDelayMs = 16_000L
+
+    private val reconnectRunnable = Runnable {
+        if (hostAddress.isNotEmpty() && !isConnected) {
+            connectCommand(hostAddress, hostPort)
+        }
+    }
 
     fun connectCommand(host: String, port: Int = 9090) {
         if (host.isEmpty()) return
@@ -38,15 +45,15 @@ class WebSocketManager(
         onConnectionStateChanged(false)
 
         val wsUrlCmd = "ws://$hostAddress:$hostPort/ws"
-        Log.i("WebSocketManager", "Connecting to commands at: $wsUrlCmd")
+        Log.i("WebSocketManager", "Connecting to commands at: $wsUrlCmd (attempt ${reconnectAttempts + 1})")
 
-        // Establish Commands WebSocket
         val cmdRequest = Request.Builder().url(wsUrlCmd).build()
         commandSocket = client.newWebSocket(cmdRequest, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.i("WebSocketManager", "Command socket connected successfully.")
                 isConnected = true
                 isConnecting = false
+                reconnectAttempts = 0 // Reset backoff on success
                 handler.post { onConnectionStateChanged(true) }
             }
 
@@ -67,17 +74,26 @@ class WebSocketManager(
 
     fun connectStream() {
         if (hostAddress.isEmpty()) return
-        if (streamSocket != null) return // Already connected or connecting
+
+        val old = streamSocket
+        if (old != null) {
+            Log.w("WebSocketManager", "Closing stale stream socket before reconnecting.")
+            old.close(1000, "Reconnecting")
+            streamSocket = null
+        }
 
         val wsUrlStream = "ws://$hostAddress:$hostPort/stream"
         Log.i("WebSocketManager", "Connecting to video stream at: $wsUrlStream")
 
-        // Establish High-Speed Display Stream WebSocket
         val streamRequest = Request.Builder().url(wsUrlStream).build()
         streamSocket = client.newWebSocket(streamRequest, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
                 val rawBytes = bytes.toByteArray()
                 handler.post { onRawFrameReceived(rawBytes) }
+            }
+
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.i("WebSocketManager", "Stream socket opened successfully.")
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -86,10 +102,12 @@ class WebSocketManager(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.i("WebSocketManager", "Stream socket closed.")
+                if (streamSocket === webSocket) streamSocket = null
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e("WebSocketManager", "Stream socket failure: ${t.message}")
+                if (streamSocket === webSocket) streamSocket = null
             }
         })
     }
@@ -110,14 +128,19 @@ class WebSocketManager(
 
     private fun scheduleReconnect() {
         handler.removeCallbacks(reconnectRunnable)
-        handler.postDelayed(reconnectRunnable, 3000)
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s (capped)
+        val delayMs = minOf(1000L * (1L shl reconnectAttempts.coerceAtMost(4)), maxReconnectDelayMs)
+        reconnectAttempts++
+        Log.i("WebSocketManager", "Scheduling reconnect in ${delayMs}ms (attempt $reconnectAttempts)")
+        handler.postDelayed(reconnectRunnable, delayMs)
     }
 
-    fun sendCommand(type: String, keyCode: Int? = null, pressed: Boolean? = null, 
-                    dx: Int? = null, dy: Int? = null, x: Int? = null, y: Int? = null, 
-                    maxX: Int? = null, maxY: Int? = null, button: Int? = null, steps: Int? = null,
-                    text: String? = null) {
-        
+    fun sendCommand(
+        type: String, keyCode: Int? = null, pressed: Boolean? = null,
+        dx: Int? = null, dy: Int? = null, x: Int? = null, y: Int? = null,
+        maxX: Int? = null, maxY: Int? = null, button: Int? = null, steps: Int? = null,
+        text: String? = null
+    ) {
         val cmd = mutableMapOf<String, Any>()
         cmd["type"] = type
         if (keyCode != null) cmd["key_code"] = keyCode
@@ -138,6 +161,7 @@ class WebSocketManager(
 
     fun disconnect() {
         handler.removeCallbacks(reconnectRunnable)
+        reconnectAttempts = 0
         commandSocket?.close(1000, "Disconnect")
         streamSocket?.close(1000, "Disconnect")
         commandSocket = null
